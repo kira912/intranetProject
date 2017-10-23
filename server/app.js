@@ -1,46 +1,77 @@
-var express = require('express');
-var path = require('path');
-var favicon = require('serve-favicon');
-var logger = require('morgan');
-var cookieParser = require('cookie-parser');
-var bodyParser = require('body-parser');
+const express = require('express');
+const path = require('path');
+const favicon = require('serve-favicon');
+const logger = require('morgan');
+const bodyParser = require('body-parser');
+const mongoose = require('mongoose')
+const passport = require('passport')
+const User = require('./models/user')
+const config = require('./configs/auth')
+const { Strategy, ExtractJwt } = require('passport-jwt')
 
-var index = require('./routes/index');
-var users = require('./routes/users');
+mongoose.connect('mongodb://localhost/intranetData', { useMongoClient: true})
 
-var app = express();
-
-// view engine setup
-app.set('views', path.join(__dirname, 'views'));
-app.set('view engine', 'jade');
+const app = express();
 
 // uncomment after placing your favicon in /public
 //app.use(favicon(path.join(__dirname, 'public', 'favicon.ico')));
 app.use(logger('dev'));
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: false }));
-app.use(cookieParser());
-app.use(express.static(path.join(__dirname, 'public')));
+
+passport.initialize()
+const strategy = new Strategy(
+  {
+     // this is a config we pass to the strategy
+    // it needs to secret to decrypt the payload of the
+    // token.
+    secretOrKey: config.jwtSecret,
+    jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken()
+  },
+  (payload, done) => {
+    User.findById(payload.id).then(user => {
+      if (user) {
+        done(null, user)
+      } else {
+        done(new Error("User not found"))
+      }
+    })
+  }
+)
+
+//tell passport to use it
+passport.use(strategy)
+
+const index = require('./routes/index');
+const authRoute = require('./routes/auth')
+
+app.get(
+  "/api/secret",
+  passport.authenticate('jwt', config.jwtSession),
+  (req, res) => {
+    res.json(req.user)
+  }
+)
 
 app.use('/', index);
-app.use('/users', users);
+app.use('/api', authRoute)
 
 // catch 404 and forward to error handler
-app.use(function(req, res, next) {
-  var err = new Error('Not Found');
+app.use((req, res, next) => {
+  const err = new Error('Not Found');
   err.status = 404;
   next(err);
 });
 
 // error handler
-app.use(function(err, req, res, next) {
-  // set locals, only providing error in development
-  res.locals.message = err.message;
-  res.locals.error = req.app.get('env') === 'development' ? err : {};
-
-  // render the error page
+app.use((err, req, res, next) => {
   res.status(err.status || 500);
-  res.render('error');
+  // return the error message only in development mode
+  res.json({
+    message: err.message,
+    error: req.app.get('env') === 'development' ? err.message : {}
+  });
 });
 
 module.exports = app;
+
